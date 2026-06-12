@@ -1,0 +1,5 @@
+# Conteúdo sincronizado — NUNCA versionar (dados de trabalho + segredos .env)
+mirror/
+snapshots/
+logs/
+git-remotes/
