@@ -28,11 +28,34 @@ Para o `inner-guru` (git), trabalho inacabado deve virar **commit** antes do exp
 
 1. Usuário Windows **dpfre** (obrigatório — caminhos absolutos).
 2. **NÃO ativar OneDrive** (política sem nuvem).
-3. Instalar: git, Node LTS, Python 3.14 em `C:\Python314`, Docker Desktop, VS Code, Claude Code, Claude Desktop (Store).
-4. Rodar `import.ps1`.
-5. `npm install` em `C:\Dev\inner-guru\apps\frontend` e em `C:\Dev\inner-guru-design-system`.
-6. Abrir Claude Desktop → Configurações → Desenvolvedor → conferir gmail_mcp e defi_mcp.
-7. Identidade git: `git -C C:\Dev\inner-guru config user.name "Renato Menezes Santana"` e `...config user.email "dpf.renato.rms@gmail.com"`.
+3. Instalar os aplicativos (lista auditada em 2026-06-12 — versões do notebook Trabalho):
+
+   | App | Versão/Local | Observação |
+   |---|---|---|
+   | git | qualquer recente | credencial GitHub via Git Credential Manager |
+   | Node.js | v24 (LTS) | inner-guru, design-system, MCPs node |
+   | Python | **3.14 em `C:\Python314`** | gmail_mcp + scripts claude-instagram |
+   | Python | **3.14 em `C:\Users\dpfre\AppData\Local\Python\bin\python3.exe`** | defi_mcp (instalação separada! ex.: python.org install manager) |
+   | FFmpeg | `winget install Gyan.FFmpeg` | Stories em vídeo (PNG→MP4) |
+   | Docker Desktop | — | inner-guru |
+   | VS Code | — | + extensão Claude Code |
+   | Claude Code | CLI/extensão | — |
+   | Claude Desktop | Microsoft Store | abrir 1x e fechar antes do import |
+
+4. Bibliotecas Python (após instalar os dois Pythons):
+   ```powershell
+   # Python C:\Python314 (gmail_mcp + claude-instagram)
+   C:\Python314\python.exe -m pip install mcp google-api-python-client google-auth google-auth-oauthlib requests python-dotenv
+
+   # Python AppData (defi_mcp)
+   & "C:\Users\dpfre\AppData\Local\Python\bin\python3.exe" -m pip install mcp httpx pydantic web3 python-dotenv
+   ```
+5. Rodar `import.ps1`.
+6. `npm install` em `C:\Dev\inner-guru\apps\frontend` e em `C:\Dev\inner-guru-design-system`.
+7. Abrir Claude Desktop → Configurações → Desenvolvedor → conferir gmail_mcp e defi_mcp. Subir a skill `F:\WorkspaceSync\skill\workspace-sync.zip` em Habilidades pessoais.
+8. Identidade git: `git -C C:\Dev\inner-guru config user.name "Renato Menezes Santana"` e `...config user.email "dpf.renato.rms@gmail.com"`.
+
+> Escopo: esta lista cobre o WORKSPACE. Apps pessoais dos atalhos do Desktop (CapCut, Obsidian, Trezor Suite, Wispr Flow etc.) não fazem parte e devem ser instalados conforme a necessidade.
 
 ## Segurança
 
