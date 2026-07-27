@@ -15,13 +15,35 @@ $stamp  = Get-Date -Format 'yyyy-MM-dd_HHmm'
 $log    = Join-Path $logDir "import_${env:COMPUTERNAME}_$stamp.log"
 $falhas = @()
 
+# --- helper: remocao robusta de arvore (nomes com [ ] @, caminhos > 260 chars) --
+# Remove-Item -Recurse quebra com globs [ ] @ e com caminhos > MAX_PATH; esta versao
+# apaga arquivo-a-arquivo via LiteralPath e usa o prefixo \\?\ como fallback.
+function Remove-TreeRobust {
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return $true }
+    # 1) arquivos (LiteralPath evita glob; \\?\ cobre caminho longo)
+    Get-ChildItem -LiteralPath $Path -Recurse -Force -File -ErrorAction SilentlyContinue | ForEach-Object {
+        $fp = $_.FullName
+        try { [System.IO.File]::Delete($fp) } catch { try { [System.IO.File]::Delete('\\?\' + $fp) } catch {} }
+    }
+    # 2) diretorios do mais profundo para o mais raso
+    Get-ChildItem -LiteralPath $Path -Recurse -Force -Directory -ErrorAction SilentlyContinue |
+        Sort-Object { $_.FullName.Length } -Descending | ForEach-Object {
+            $dp = $_.FullName
+            try { [System.IO.Directory]::Delete($dp, $false) } catch { try { [System.IO.Directory]::Delete('\\?\' + $dp, $false) } catch {} }
+        }
+    # 3) raiz
+    try { [System.IO.Directory]::Delete($Path, $true) } catch { try { [System.IO.Directory]::Delete('\\?\' + $Path, $true) } catch {} }
+    return (-not (Test-Path -LiteralPath $Path))
+}
+
 if (-not (Test-Path $mirror)) { Write-Error "Espelho nao encontrado em $mirror - rode export.ps1 na outra maquina primeiro."; exit 1 }
 
 # alvos: origem no espelho -> destino local
 $alvos = @(
     @{ de = (Join-Path $mirror 'Workspace');                    para = 'C:\Workspace' },
     @{ de = (Join-Path $mirror 'Dev\inner-guru-design-system'); para = 'C:\Dev\inner-guru-design-system' },
-    @{ de = (Join-Path $mirror 'claude-home');                  para = 'C:\Users\dpfre\.claude' },
+    @{ de = (Join-Path $mirror 'claude-home');                  para = 'C:\Users\dpfre\.claude'; xd = @('projects') },
     @{ de = (Join-Path $mirror 'claude-instagram');             para = 'C:\Users\dpfre\claude-instagram' },
     @{ de = (Join-Path $mirror 'plugins');                      para = 'C:\Users\dpfre\plugins' }
 )
@@ -41,7 +63,10 @@ if (-not $SemBackup) {
     # retencao: manter as 2 mais recentes desta maquina
     Get-ChildItem (Join-Path $sync 'snapshots') -Directory -Filter "pre-import_${env:COMPUTERNAME}_*" |
         Sort-Object Name -Descending | Select-Object -Skip 2 |
-        ForEach-Object { Remove-Item $_.FullName -Recurse -Force }
+        ForEach-Object {
+            if (Remove-TreeRobust $_.FullName) { Write-Host "Snapshot antigo removido: $($_.Name)" }
+            else { Write-Warning "Snapshot antigo NAO removido por completo (possivel corrupcao de FS - rode chkdsk $((Split-Path $sync -Qualifier)) /f): $($_.Name)"; $falhas += "retencao snapshot ($($_.Name))" }
+        }
 }
 
 # --- 1. Git: inner-guru --------------------------------------
@@ -68,9 +93,29 @@ if (Test-Path $bare) {
 # --- 2. Espelhos -> local -------------------------------------
 foreach ($a in $alvos) {
     if (-not (Test-Path $a.de)) { Write-Warning "PULADO (nao esta no espelho): $($a.de)"; continue }
-    robocopy $a.de $a.para /MIR /XJ /R:2 /W:2 /NFL /NDL /NP "/LOG+:$log" | Out-Null
+    $rcArgs = @($a.de, $a.para, '/MIR', '/XJ', '/R:2', '/W:2', '/NFL', '/NDL', '/NP', "/LOG+:$log")
+    if ($a.xd) { $rcArgs += '/XD'; $rcArgs += $a.xd }   # /MIR nunca apaga estas subpastas locais
+    robocopy @rcArgs | Out-Null
     if ($LASTEXITCODE -ge 8) { $falhas += "$($a.para) (robocopy exit $LASTEXITCODE)" }
     else { Write-Host ("OK  {0}  ->  {1}" -f $a.de, $a.para) }
+}
+
+# --- 2b. Restaura memoria do Claude Code SEM destruir a local -------
+# O /MIR do claude-home NAO toca em 'projects' (excluido acima) para nunca apagar
+# sessoes/memoria locais. Aqui trazemos de volta as pastas memory\ do espelho de
+# forma ADITIVA (/E, sem delete): arquivos do HD sobrescrevem/adicionam, os locais
+# que nao estao no HD permanecem. Evita o bug de o import zerar a memoria do Claude.
+$memRoot = Join-Path $mirror 'claude-home\projects'
+if (Test-Path $memRoot) {
+    Get-ChildItem $memRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+        $srcMem = Join-Path $_.FullName 'memory'
+        if (Test-Path $srcMem) {
+            $dstMem = "C:\Users\dpfre\.claude\projects\$($_.Name)\memory"
+            robocopy $srcMem $dstMem /E /R:2 /W:2 /NFL /NDL /NP "/LOG+:$log" | Out-Null
+            if ($LASTEXITCODE -ge 8) { $falhas += "restore memory $($_.Name) (robocopy exit $LASTEXITCODE)" }
+            else { Write-Host "OK  memory restaurada: $($_.Name)" }
+        }
+    }
 }
 
 # --- 3. Config do Claude Desktop (so no primeiro setup) -------

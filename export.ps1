@@ -14,6 +14,28 @@ $stamp  = Get-Date -Format 'yyyy-MM-dd_HHmm'
 $log    = Join-Path $logDir "export_$stamp.log"
 $falhas = @()
 
+# --- helper: remocao robusta de arvore (nomes com [ ] @, caminhos > 260 chars) --
+# Remove-Item -Recurse quebra com globs [ ] @ e com caminhos > MAX_PATH; esta versao
+# apaga arquivo-a-arquivo via LiteralPath e usa o prefixo \\?\ como fallback.
+function Remove-TreeRobust {
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return $true }
+    # 1) arquivos (LiteralPath evita glob; \\?\ cobre caminho longo)
+    Get-ChildItem -LiteralPath $Path -Recurse -Force -File -ErrorAction SilentlyContinue | ForEach-Object {
+        $fp = $_.FullName
+        try { [System.IO.File]::Delete($fp) } catch { try { [System.IO.File]::Delete('\\?\' + $fp) } catch {} }
+    }
+    # 2) diretorios do mais profundo para o mais raso
+    Get-ChildItem -LiteralPath $Path -Recurse -Force -Directory -ErrorAction SilentlyContinue |
+        Sort-Object { $_.FullName.Length } -Descending | ForEach-Object {
+            $dp = $_.FullName
+            try { [System.IO.Directory]::Delete($dp, $false) } catch { try { [System.IO.Directory]::Delete('\\?\' + $dp, $false) } catch {} }
+        }
+    # 3) raiz
+    try { [System.IO.Directory]::Delete($Path, $true) } catch { try { [System.IO.Directory]::Delete('\\?\' + $Path, $true) } catch {} }
+    return (-not (Test-Path -LiteralPath $Path))
+}
+
 function Mirror($origem, $destino, $extras) {
     if (-not (Test-Path $origem)) { Write-Warning "PULADO (nao existe): $origem"; return }
     $args = @($origem, $destino, '/MIR', '/XJ', '/R:2', '/W:2', '/NFL', '/NDL', '/NP', "/LOG+:$log") + $extras
@@ -23,6 +45,11 @@ function Mirror($origem, $destino, $extras) {
 }
 
 Write-Host "=== EXPORT $stamp ===" -ForegroundColor Cyan
+# destino resolvido (letra + rotulo do volume) - deixa visivel se caiu no HD certo
+$drv  = (Split-Path $sync -Qualifier)                                   # ex.: "F:"
+$vol  = Get-Volume -DriveLetter ($drv.TrimEnd(':')) -ErrorAction SilentlyContinue
+$alvo = if ($vol) { "[$($vol.FileSystemLabel)] $drv  ->  $mirror" } else { "$drv  ->  $mirror" }
+Write-Host "Destino do export: $alvo" -ForegroundColor Cyan
 
 # --- 1. Git: inner-guru -> repo bare no HD -------------------
 $repo = 'C:\Dev\inner-guru'
@@ -69,10 +96,28 @@ if ($Snapshot) {
     Get-ChildItem (Join-Path $sync 'snapshots') -Directory |
         Where-Object { $_.Name -match '^\d{4}-\d{2}-\d{2}$' } |
         Sort-Object Name -Descending | Select-Object -Skip 3 |
-        ForEach-Object { Remove-Item $_.FullName -Recurse -Force; Write-Host "Snapshot antigo removido: $($_.Name)" }
+        ForEach-Object {
+            if (Remove-TreeRobust $_.FullName) { Write-Host "Snapshot antigo removido: $($_.Name)" }
+            else { Write-Warning "Snapshot antigo NAO removido por completo (possivel corrupcao de FS - rode chkdsk $drv /f): $($_.Name)"; $falhas += "retencao snapshot ($($_.Name))" }
+        }
+}
+
+# --- 4. Verificacao pos-export: confirma que gravou MESMO no destino ----------
+# Grava um carimbo no espelho e rele; pega o caso "SEM FALHAS" que na verdade
+# escreveu no lugar errado / nao persistiu (falso positivo).
+$stampFile = Join-Path $mirror ".last-export_${env:COMPUTERNAME}.txt"
+$token     = "$stamp|$env:COMPUTERNAME"
+try {
+    Set-Content -LiteralPath $stampFile -Value $token -Encoding UTF8 -ErrorAction Stop
+    $readBack = (Get-Content -LiteralPath $stampFile -Raw -ErrorAction Stop).Trim()
+    if     ($readBack -ne $token)               { $falhas += "verificacao pos-export: carimbo nao confere (destino errado?)" }
+    elseif (-not (Test-Path -LiteralPath $log)) { $falhas += "verificacao pos-export: log nao encontrado ($log)" }
+    else   { Write-Host "OK  verificacao: gravacao confirmada em  $alvo" -ForegroundColor Green }
+} catch {
+    $falhas += "verificacao pos-export: nao consegui gravar/ler carimbo em $mirror ($($_.Exception.Message))"
 }
 
 # --- Resumo ---------------------------------------------------
 Write-Host ''
 if ($falhas) { Write-Warning "EXPORT COM FALHAS: $($falhas -join '; ')  (ver log: $log)" ; exit 1 }
-else { Write-Host "EXPORT CONCLUIDO SEM FALHAS. Log: $log" -ForegroundColor Green }
+else { Write-Host "EXPORT CONCLUIDO SEM FALHAS -> $alvo" -ForegroundColor Green }
