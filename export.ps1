@@ -20,27 +20,44 @@ $falhas = @()
 function Remove-TreeRobust {
     param([Parameter(Mandatory)][string]$Path)
     if (-not (Test-Path -LiteralPath $Path)) { return $true }
-    # 1) arquivos (LiteralPath evita glob; \\?\ cobre caminho longo)
-    Get-ChildItem -LiteralPath $Path -Recurse -Force -File -ErrorAction SilentlyContinue | ForEach-Object {
-        $fp = $_.FullName
-        try { [System.IO.File]::Delete($fp) } catch { try { [System.IO.File]::Delete('\\?\' + $fp) } catch {} }
+    # Metodo 1 - rmdir do cmd: rapido e ja remove arquivos somente-leitura.
+    cmd /c rmdir /s /q "$Path" 2>$null
+    if (-not (Test-Path -LiteralPath $Path)) { return $true }
+    # Metodo 2 (fallback definitivo) - espelhar uma pasta VAZIA com robocopy.
+    # robocopy lida nativamente com caminhos > 260 chars E apaga arquivos read-only
+    # (objetos .git em subpastas profundas), que era o que travava a exclusao dos snapshots.
+    $empty = Join-Path ([System.IO.Path]::GetTempPath()) ('_wsempty_' + [System.IO.Path]::GetRandomFileName())
+    New-Item -ItemType Directory -Force $empty | Out-Null
+    robocopy $empty "$Path" /MIR /R:1 /W:1 /NFL /NDL /NP /NJH /NJS | Out-Null
+    cmd /c rmdir /s /q "$Path" 2>$null
+    if (Test-Path -LiteralPath $Path) {
+        # Metodo 3 - ACL: "Acesso Negado" (Exit 5), tipico das pastas session-env do
+        # Claude com ACL restritiva. Assume posse e libera permissao total, depois apaga.
+        # So tem efeito com elevacao (admin); sem admin falha silenciosamente e o husk
+        # fica (inofensivo - a retencao passou a ignorar pastas vazias).
+        # icacls /setowner e /grant por SID well-known (independente de idioma):
+        # S-1-5-32-544 = Administradores; S-1-1-0 = Todos.
+        icacls "$Path" /setowner "*S-1-5-32-544" /T /C /Q 2>$null | Out-Null
+        icacls "$Path" /grant "*S-1-1-0:(OI)(CI)F" /T /C /Q 2>$null | Out-Null
+        cmd /c rmdir /s /q "$Path" 2>$null
     }
-    # 2) diretorios do mais profundo para o mais raso
-    Get-ChildItem -LiteralPath $Path -Recurse -Force -Directory -ErrorAction SilentlyContinue |
-        Sort-Object { $_.FullName.Length } -Descending | ForEach-Object {
-            $dp = $_.FullName
-            try { [System.IO.Directory]::Delete($dp, $false) } catch { try { [System.IO.Directory]::Delete('\\?\' + $dp, $false) } catch {} }
-        }
-    # 3) raiz
-    try { [System.IO.Directory]::Delete($Path, $true) } catch { try { [System.IO.Directory]::Delete('\\?\' + $Path, $true) } catch {} }
+    Remove-Item -LiteralPath $empty -Recurse -Force -ErrorAction SilentlyContinue
     return (-not (Test-Path -LiteralPath $Path))
 }
 
 function Mirror($origem, $destino, $extras) {
     if (-not (Test-Path $origem)) { Write-Warning "PULADO (nao existe): $origem"; return }
     $args = @($origem, $destino, '/MIR', '/XJ', '/R:2', '/W:2', '/NFL', '/NDL', '/NP', "/LOG+:$log") + $extras
-    robocopy @args | Out-Null
-    if ($LASTEXITCODE -ge 8) { $script:falhas += "$origem (robocopy exit $LASTEXITCODE)" }
+    $saida = robocopy @args
+    if ($LASTEXITCODE -ge 8) {
+        $script:falhas += "$origem (robocopy exit $LASTEXITCODE)"
+        # exit >= 8 = algo NAO viajou. Mostra o caminho exato que falhou (licao de 11/08:
+        # um husk com ACL quebrada no espelho travou a subarvore inteira do video-vox e o
+        # unico rastro era um "FALHA 1" mudo na tabela do log).
+        $erros = $saida | Select-String 'ERRO|0x0' | ForEach-Object { $_.Line.Trim() } | Select-Object -Unique
+        if ($erros) { $erros | ForEach-Object { Write-Host "  >> $_" -ForegroundColor Red } }
+        Write-Warning "FALHA no espelho de $origem - parte da arvore NAO viajou. Ver resumo FALHA no log: $log"
+    }
     else { Write-Host ("OK  {0}  ->  {1}" -f $origem, $destino) }
 }
 
@@ -68,7 +85,7 @@ if (Test-Path $repo) {
 # --- 2. Espelhos robocopy ------------------------------------
 Mirror 'C:\Workspace'                      (Join-Path $mirror 'Workspace')                  @('/XD','node_modules','.next','__pycache__','.venv')
 Mirror 'C:\Dev\inner-guru-design-system'   (Join-Path $mirror 'Dev\inner-guru-design-system') @('/XD','node_modules','.next')
-Mirror 'C:\Users\dpfre\.claude'            (Join-Path $mirror 'claude-home')                @('/XD','projects','shell-snapshots','tasks','worktrees','__pycache__')
+Mirror 'C:\Users\dpfre\.claude'            (Join-Path $mirror 'claude-home')                @('/XD','projects','shell-snapshots','tasks','worktrees','__pycache__','session-env')
 Mirror 'C:\Users\dpfre\claude-instagram'   (Join-Path $mirror 'claude-instagram')           @('/XD','__pycache__')
 Mirror 'C:\Users\dpfre\plugins'            (Join-Path $mirror 'plugins')                    @('/XD','node_modules','__pycache__')
 
@@ -92,9 +109,19 @@ if ($Snapshot) {
     $snapDir = Join-Path $sync "snapshots\$(Get-Date -Format 'yyyy-MM-dd')"
     robocopy $mirror $snapDir /E /R:2 /W:2 /NFL /NDL /NP "/LOG+:$log" | Out-Null
     if ($LASTEXITCODE -ge 8) { $falhas += 'snapshot' } else { Write-Host "OK  snapshot: $snapDir" }
-    # retencao: manter os 3 mais recentes (apenas snapshots regulares AAAA-MM-DD)
+    # limpeza de husks: remove QUALQUER snapshot vazio (0 arquivos) - restos de
+    # backup/remocao que falhou. Cobre tanto os diarios (AAAA-MM-DD) quanto os
+    # pre-import; um husk vazio nunca e um backup util e distorce a retencao.
+    Get-ChildItem (Join-Path $sync 'snapshots') -Directory -ErrorAction SilentlyContinue |
+        Where-Object { -not (Get-ChildItem $_.FullName -Recurse -File -Force -ErrorAction SilentlyContinue | Select-Object -First 1) } |
+        ForEach-Object {
+            if (Remove-TreeRobust $_.FullName) { Write-Host "Snapshot vazio (husk) removido: $($_.Name)" }
+            else { Write-Warning "Husk vazio NAO removido: $($_.Name)"; $falhas += "husk snapshot ($($_.Name))" }
+        }
+    # retencao: manter os 3 mais recentes (apenas snapshots regulares AAAA-MM-DD e
+    # NAO-VAZIOS - husk corrompido que resista a exclusao nao derruba backup real).
     Get-ChildItem (Join-Path $sync 'snapshots') -Directory |
-        Where-Object { $_.Name -match '^\d{4}-\d{2}-\d{2}$' } |
+        Where-Object { $_.Name -match '^\d{4}-\d{2}-\d{2}$' -and (Get-ChildItem $_.FullName -Recurse -File -Force -ErrorAction SilentlyContinue | Select-Object -First 1) } |
         Sort-Object Name -Descending | Select-Object -Skip 3 |
         ForEach-Object {
             if (Remove-TreeRobust $_.FullName) { Write-Host "Snapshot antigo removido: $($_.Name)" }
@@ -115,6 +142,13 @@ try {
     else   { Write-Host "OK  verificacao: gravacao confirmada em  $alvo" -ForegroundColor Green }
 } catch {
     $falhas += "verificacao pos-export: nao consegui gravar/ler carimbo em $mirror ($($_.Exception.Message))"
+}
+
+# --- Marcador de reparo: sintoma de corrupcao de FS (husk/retencao que nao apagou,
+# ou robocopy exit 15/16) deixa flag que o sync.ps1 le p/ rodar chkdsk automaticamente.
+if ($falhas -match 'husk snapshot|retencao snapshot|exit 1[56]') {
+    Set-Content -LiteralPath (Join-Path $sync '.needs-chkdsk') -Value $stamp -Encoding ASCII -ErrorAction SilentlyContinue
+    Write-Warning "Sinal de corrupcao de FS detectado - chkdsk sera rodado no proximo sync (marcador .needs-chkdsk criado)."
 }
 
 # --- Resumo ---------------------------------------------------
