@@ -64,8 +64,12 @@ if ($needRepair -and (Test-Admin)) {
 
 # 3. Executa o import/export de verdade.
 $target = if ($Mode -eq 'import') { Join-Path $syncDir 'import.ps1' } else { Join-Path $syncDir 'export.ps1' }
-$rest   = @(); if ($Mode -eq 'export-snap') { $rest += '-Snapshot' }
-if ($Mode -ne 'import' -and $NoEject) { $rest += '-NoEject' }
+# Splat por HASHTABLE, nao por array: splat de array NAO liga switch nomeado -
+# a string '-Snapshot'/'-NoEject' vira argumento posicional morto (bug que fazia
+# o ws-snap rodar sem -Snapshot e o -NoEject ser ignorado).
+$rest = @{}
+if ($Mode -eq 'export-snap')          { $rest.Snapshot = $true }
+if ($Mode -ne 'import' -and $NoEject) { $rest.NoEject  = $true }
 Write-Host "=== Rodando: $Mode ===" -ForegroundColor Cyan
 & $target @rest
 $rc = $LASTEXITCODE

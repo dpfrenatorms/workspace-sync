@@ -61,7 +61,25 @@ A mídia foi trocada por SSD novo e as falhas continuaram. Evidência coletada:
 
 ## Pendências
 
-- [ ] Rodar `wsi` uma vez → chkdsk F: /f /x automático (UAC) + import de verificação limpo.
+- [x] Rodar `wsi` uma vez → chkdsk F: /f /x automático (UAC) + import de verificação limpo. *(feito 12/08 ~08:44 — "IMPORT CONCLUIDO SEM FALHAS"; volume voltou a `Healthy/OK`)*
 - [ ] Ativar "Remoção rápida" nos DOIS notebooks (nt2 e vivobook).
-- [ ] `git push` deste commit para o GitHub (proteção contra a próxima corrupção do HD).
-- [ ] Confirmar um ciclo `wse` → `wsi` sem falhas e sem novo `Ntfs 55` no event log.
+- [x] `git push` deste commit para o GitHub. *(feito — e salvou o repo DUAS vezes no mesmo dia, ver adendo)*
+- [x] Confirmar um ciclo `wse` → `wsi` sem falhas e sem novo `Ntfs 55` no event log. *(export 08:58 "SEM FALHAS" + import 08:44 limpos; zero eventos Ntfs pós-chkdsk)*
+
+## Adendo (mesma sessão, pós-chkdsk) — mais duas lições
+
+1. **chkdsk descarta dados escritos durante a corrupção.** O reparo zerou `export.ps1`,
+   `sync.ps1` e objetos git soltos (inclusive o pack enxertado de manhã) — todos
+   arquivos ESCRITOS enquanto o volume estava corrompido (`found.000` criado no F:).
+   Recuperação: mesmo procedimento do pack do GitHub + `git checkout`. **Regra: commit
+   + push ANTES de rodar chkdsk; se escrever com o volume doente, considere perdido.**
+2. **Splat de array não liga switch nomeado (PS 5.1).** No `sync.ps1`,
+   `$rest = @('-NoEject'); & $target @rest` passava a string como argumento posicional
+   morto — o `-NoEject` era ignorado e, pior, o `-Snapshot` do `ws-snap` NUNCA tinha
+   chegado ao `export.ps1` (bug latente desde a criação: ws-snap rodava export comum).
+   Correção: splat por **hashtable** (`$rest = @{}; $rest.NoEject = $true`).
+   Também adicionados `exit 0` explícitos no fim de `export.ps1`/`import.ps1` — sem
+   isso o `exit $rc` do sync herdava `robocopy exit 1` (= sucesso) como falso FALHA.
+3. Auto-eject validado no caminho de falha: com VS Code aberto em `F:\WorkspaceSync`,
+   a ejeção não conclui e o script avisa corretamente (fechar o VS Code do F: antes
+   do export de fim de dia, ou usar `wse -NoEject`).

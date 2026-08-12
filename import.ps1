@@ -194,3 +194,6 @@ Write-Host ''
 Write-Host 'Lembretes pos-import: npm install (se package.json mudou), Docker/Claude Desktop fechados durante o import, reabrir apps.'
 if ($falhas) { Write-Warning "IMPORT COM PENDENCIAS: $($falhas -join '; ')  (ver log: $log)"; exit 1 }
 else { Write-Host "IMPORT CONCLUIDO SEM FALHAS. Log: $log" -ForegroundColor Green }
+# exit explicito: sem ele o "exit $rc" do sync.ps1 herda o codigo do ultimo comando
+# nativo e pode reportar falso FALHA num import 100% OK.
+exit 0

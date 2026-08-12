@@ -171,3 +171,6 @@ if (-not $NoEject) {
         Write-Host "HD ejetado com seguranca - pode desconectar o cabo." -ForegroundColor Green
     }
 }
+# exit explicito: sem ele o "exit $rc" do sync.ps1 herda o codigo do ultimo comando
+# nativo (robocopy exit 1 = sucesso) e reporta falso FALHA num export 100% OK.
+exit 0
