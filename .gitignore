@@ -4,3 +4,4 @@ snapshots/
 logs/
 git-remotes/
 skill/*.zip
+.needs-chkdsk

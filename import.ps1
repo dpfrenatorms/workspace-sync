@@ -1,5 +1,5 @@
-# ============================================================
-# import.ps1 — Aplica o estado do HD neste notebook
+﻿# ============================================================
+# import.ps1 â€” Aplica o estado do HD neste notebook
 # Uso:  powershell -ExecutionPolicy Bypass -File F:\WorkspaceSync\import.ps1
 #       (acrescente -SemBackup para pular a copia de seguranca pre-import)
 # Rode SEMPRE antes de comecar a trabalhar na maquina que estava parada.
@@ -52,7 +52,7 @@ if (-not (Test-Path $mirror)) { Write-Error "Espelho nao encontrado em $mirror -
 $alvos = @(
     @{ de = (Join-Path $mirror 'Workspace');                    para = 'C:\Workspace' },
     @{ de = (Join-Path $mirror 'Dev\inner-guru-design-system'); para = 'C:\Dev\inner-guru-design-system' },
-    @{ de = (Join-Path $mirror 'claude-home');                  para = 'C:\Users\dpfre\.claude'; xd = @('projects','session-env') },
+    @{ de = (Join-Path $mirror 'claude-home');                  para = 'C:\Users\dpfre\.claude'; xd = @('projects','session-env','.in_use') },
     @{ de = (Join-Path $mirror 'claude-instagram');             para = 'C:\Users\dpfre\claude-instagram' },
     @{ de = (Join-Path $mirror 'plugins');                      para = 'C:\Users\dpfre\plugins' }
 )

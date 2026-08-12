@@ -3,7 +3,7 @@
 # Uso:  powershell -ExecutionPolicy Bypass -File F:\WorkspaceSync\export.ps1
 #       (acrescente -Snapshot para gerar uma copia datada congelada)
 # ============================================================
-param([switch]$Snapshot)
+param([switch]$Snapshot, [switch]$NoEject)
 
 $ErrorActionPreference = 'Continue'
 $sync   = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -85,7 +85,7 @@ if (Test-Path $repo) {
 # --- 2. Espelhos robocopy ------------------------------------
 Mirror 'C:\Workspace'                      (Join-Path $mirror 'Workspace')                  @('/XD','node_modules','.next','__pycache__','.venv')
 Mirror 'C:\Dev\inner-guru-design-system'   (Join-Path $mirror 'Dev\inner-guru-design-system') @('/XD','node_modules','.next')
-Mirror 'C:\Users\dpfre\.claude'            (Join-Path $mirror 'claude-home')                @('/XD','projects','shell-snapshots','tasks','worktrees','__pycache__','session-env')
+Mirror 'C:\Users\dpfre\.claude'            (Join-Path $mirror 'claude-home')                @('/XD','projects','shell-snapshots','tasks','worktrees','__pycache__','session-env','.in_use')
 Mirror 'C:\Users\dpfre\claude-instagram'   (Join-Path $mirror 'claude-instagram')           @('/XD','__pycache__')
 Mirror 'C:\Users\dpfre\plugins'            (Join-Path $mirror 'plugins')                    @('/XD','node_modules','__pycache__')
 
@@ -155,3 +155,19 @@ if ($falhas -match 'husk snapshot|retencao snapshot|exit 1[56]') {
 Write-Host ''
 if ($falhas) { Write-Warning "EXPORT COM FALHAS: $($falhas -join '; ')  (ver log: $log)" ; exit 1 }
 else { Write-Host "EXPORT CONCLUIDO SEM FALHAS -> $alvo" -ForegroundColor Green }
+
+# --- 5. Ejecao segura automatica -------------------------------
+# Causa raiz dos chkdsk recorrentes: o Windows monta o SSD USB com cache de escrita
+# (DriveType Fixed) e desconectar o cabo sem ejetar deixa metadados NTFS pela metade
+# (eventos Ntfs 55/131). Ejetar aqui descarrega o cache e desmonta o volume - depois
+# disso puxar o cabo e seguro. So ejeta com export 100% OK (com falhas o HD fica
+# montado para diagnostico/re-execucao). Use -NoEject para manter montado.
+if (-not $NoEject) {
+    (New-Object -ComObject Shell.Application).Namespace(17).ParseName($drv).InvokeVerb('Eject')
+    Start-Sleep -Seconds 4
+    if (Test-Path -LiteralPath $sync) {
+        Write-Warning "Ejecao automatica nao concluiu (algo segura o $drv - Explorer/terminal aberto nele?). Use 'Remover hardware com seguranca' antes de desconectar."
+    } else {
+        Write-Host "HD ejetado com seguranca - pode desconectar o cabo." -ForegroundColor Green
+    }
+}

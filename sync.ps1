@@ -11,6 +11,7 @@
 param(
     [ValidateSet('import','export','export-snap')][string]$Mode = 'import',
     [switch]$ForceRepair,
+    [switch]$NoEject,   # export: nao ejetar o HD ao final
     [switch]$Elevated   # interno: sinaliza que ja e a instancia elevada
 )
 $ErrorActionPreference = 'Continue'
@@ -42,6 +43,7 @@ if ($needRepair -and -not (Test-Admin)) {
     Write-Host "Marcador de corrupcao de FS presente -> vou pedir elevacao para rodar chkdsk $drive antes do $Mode." -ForegroundColor Yellow
     $spArgs = @('-ExecutionPolicy','Bypass','-File',"`"$selfLocal`"",'-Mode',$Mode,'-Elevated')
     if ($ForceRepair) { $spArgs += '-ForceRepair' }
+    if ($NoEject)     { $spArgs += '-NoEject' }
     Start-Process powershell -Verb RunAs -ArgumentList $spArgs
     exit 0
 }
@@ -63,6 +65,7 @@ if ($needRepair -and (Test-Admin)) {
 # 3. Executa o import/export de verdade.
 $target = if ($Mode -eq 'import') { Join-Path $syncDir 'import.ps1' } else { Join-Path $syncDir 'export.ps1' }
 $rest   = @(); if ($Mode -eq 'export-snap') { $rest += '-Snapshot' }
+if ($Mode -ne 'import' -and $NoEject) { $rest += '-NoEject' }
 Write-Host "=== Rodando: $Mode ===" -ForegroundColor Cyan
 & $target @rest
 $rc = $LASTEXITCODE

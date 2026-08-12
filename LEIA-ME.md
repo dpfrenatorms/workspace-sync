@@ -62,6 +62,21 @@ Para o `inner-guru` (git), trabalho inacabado deve virar **commit** antes do exp
 - O espelho contém **segredos** (.env com chaves de API, wallet). Mantenha o **BitLocker To Go ativado** neste HD (Painel de Controle → BitLocker → Data F:).
 - Apps fechados durante export/import: Claude Desktop (segura os MCP python) e Docker.
 
+## Integridade do HD (evitar chkdsk recorrente)
+
+O SSD USB monta como disco "Fixo" e o Windows usa **cache de escrita**: desconectar o
+cabo sem ejetar deixa metadados NTFS pela metade (eventos Ntfs 55/131 → chkdsk).
+Duas proteções:
+
+1. **Auto-eject:** o `export.ps1` ejeta o HD automaticamente ao terminar **sem falhas**
+   (descarrega o cache e desmonta — depois disso pode puxar o cabo). Para manter
+   montado: `wse -NoEject`. Com falhas no export, o HD fica montado para diagnóstico.
+2. **Remoção rápida (uma vez por notebook):** Gerenciador de Dispositivos →
+   Unidades de disco → SanDisk Portable SSD → aba Diretivas → **Remoção rápida**.
+   Desliga o cache de escrita; puxar o cabo passa a ser seguro mesmo sem ejetar.
+
+Nunca desconecte o HD durante um export/import em andamento.
+
 ## Estrutura
 
 ```
