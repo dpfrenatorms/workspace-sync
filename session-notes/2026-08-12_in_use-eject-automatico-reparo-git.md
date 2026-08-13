@@ -83,3 +83,65 @@ A mídia foi trocada por SSD novo e as falhas continuaram. Evidência coletada:
 3. Auto-eject validado no caminho de falha: com VS Code aberto em `F:\WorkspaceSync`,
    a ejeção não conclui e o script avisa corretamente (fechar o VS Code do F: antes
    do export de fim de dia, ou usar `wse -NoEject`).
+
+## Adendo 2 (12/08, vivobook) — auto-eject NUNCA funcionou; causa raiz e correção
+
+O `wse` de hoje no nt2 terminou "SEM FALHAS" mas a ejeção "não concluiu". Diagnóstico
+no vivobook mostrou que **não era handle preso**: o mecanismo era um no-op.
+
+- **Causa raiz:** o SSD é UASP e enumera como `SCSI\DISK...` (disco **Fixo**). Para
+  disco Fixo o Shell **não expõe o verbo Eject** (verificado: a lista `Verbs()` do F:
+  não tem "Ejetar" — mesma razão pela qual a bandeja "Remover hardware" não lista o
+  SSD, já anotada na seção 2). `InvokeVerb('Eject')` com verbo inexistente não dá
+  erro: não faz nada. Agravante latente: `InvokeVerb` compara nome **localizado**
+  ("Ejetar" em pt-BR), então nem em drive removível o literal `'Eject'` funcionaria.
+  O aviso "algo segura o F:" era falso — o `Test-Path` pós-eject sempre acusa volume
+  montado porque a ejeção nunca é tentada. A "validação" do adendo item 3 só validou
+  o branch do aviso (que disparava sempre).
+- **Correção (feita no `export.ps1`):** ejeção via API `CM_Request_Device_EjectW`
+  (cfgmgr32, P/Invoke — a mesma via do RemoveDrive): flush + desmonta + remove o
+  devnode; ao reconectar o cabo remonta sozinho. O script localiza o devnode do disco
+  pelo `PNPDeviceID` e, se o nó não for ejetável (UASP: o nó removível é o pai
+  `USB\VID_0781&PID_55BB`), sobe até 3 pais. Veto real (handle aberto) agora é
+  reportado com o **nome de quem segura** (`vetoName`). Também faz
+  `Set-Location C:\` antes, para o próprio processo não segurar CWD no F:.
+  Cadeia validada no vivobook: `SCSI\DISK` → `USB\VID_0781&PID_55BB` (SanDisk) → hubs.
+- **"Remoção rápida" ATIVADA no vivobook** via registro (elevado):
+  `HKLM\SYSTEM\CurrentControlSet\Enum\SCSI\DISK&VEN_SANDISK&PROD_PORTABLE_SSD\<inst>\Device Parameters\Partmgr`
+  → `UserRemovalPolicy=3` (ExpectSurpriseRemoval). **Vale a partir da próxima
+  reconexão do HD.** Desliga o cache de escrita → puxar o cabo vira operação segura
+  mesmo sem ejetar; o eject passa a ser cinto-e-suspensório.
+- **Pendente:** ativar "Remoção rápida" no **nt2** (mesmo registro — o `<inst>` do
+  devnode pode diferir lá; ou `devmgmt.msc` → SanDisk → Diretivas → Remoção rápida).
+- **Atenção no próximo `wse`:** a ejeção agora é real — se VS Code/terminal/sessão do
+  Claude estiver com CWD no F:, ela será **vetada com nome do processo**. Fechar antes
+  ou usar `wse -NoEject`.
+
+## Adendo 3 (13/08, nt2) — erro do auto-eject no vivobook: causa e fix definitivo
+
+O `wse` de 12/08 no vivobook terminou SEM FALHAS mas o auto-eject deu mensagem de
+erro (qual, não se sabe — o desfecho não ia para o log). Diagnóstico no nt2:
+
+- **Sem dano:** `fsutil dirty query F:` limpo, volume Healthy, `wsi` de 13/08 normal,
+  sem `.needs-chkdsk`. Com a Remoção rápida ativa, o eject é cinto-e-suspensório.
+- **Bug real (não transitório):** o loop tentava `CM_Request_Device_EjectW` primeiro
+  no nó do **disco** (`SCSI\DISK...`, caps 0xE0 — sem EJECTSUPPORTED/REMOVABLE, ou
+  seja, não-ejetável) e fazia `break` em **qualquer** `vetoType != 0`. Um veto
+  "ilegal" nessa primeira chamada abortava o loop **antes de subir ao nó pai USB**
+  (`USB\VID_0781&PID_55BB`, UAS — REMOVABLE, o ejetável de verdade), reportando
+  "Ejecao VETADA" falso.
+- **Fix (export.ps1, seção 5):** ① o devnode ejetável agora é escolhido ANTES, por
+  capability (`CM_DRP_CAPABILITIES` 0x10, primeiro ancestral com REMOVABLE 0x4 ou
+  EJECTSUPPORTED 0x2); ② veto só é terminal quando vem com `vetoName` (processo
+  segurando o F:) — sem nome, 1 retry após 1s; ③ o desfecho é gravado no log do
+  export: `EJECT: ok (<devnode>)` / `vetada tipo=N por=<processo>` / `rc=N` /
+  `exception: ...` — dúvida futura se resolve lendo `logs\export_*.log`.
+- **Validado no nt2 (13/08):** teste isolado ejetou pelo nó USB
+  (`EJECT: ok (USB\VID_0781&PID_55BB\...)`), F: desmontou; após replug do cabo o
+  disco remontou sozinho e o dirty bit continuou limpo (volume Healthy).
+  ⚠️ Pós-eject o devnode fica `CM_PROB_HELD_FOR_EJECT`: rescan (`pnputil
+  /scan-devices` ou `CM_Reenumerate_DevNode`) NÃO remonta — e exige admin de
+  qualquer forma. Voltar sem replug físico só com `Enable-PnpDevice` elevado;
+  na prática, **reconectar o cabo é o caminho normal**.
+- **RemovalPolicy=3 já ativa no nt2** (diagnóstico da cadeia mostrou policy 3 no nó
+  do disco) — a pendência do Adendo 2 estava fechada sem sabermos; nada a fazer.

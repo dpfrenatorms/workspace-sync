@@ -157,18 +157,88 @@ if ($falhas) { Write-Warning "EXPORT COM FALHAS: $($falhas -join '; ')  (ver log
 else { Write-Host "EXPORT CONCLUIDO SEM FALHAS -> $alvo" -ForegroundColor Green }
 
 # --- 5. Ejecao segura automatica -------------------------------
-# Causa raiz dos chkdsk recorrentes: o Windows monta o SSD USB com cache de escrita
-# (DriveType Fixed) e desconectar o cabo sem ejetar deixa metadados NTFS pela metade
-# (eventos Ntfs 55/131). Ejetar aqui descarrega o cache e desmonta o volume - depois
-# disso puxar o cabo e seguro. So ejeta com export 100% OK (com falhas o HD fica
-# montado para diagnostico/re-execucao). Use -NoEject para manter montado.
+# Causa raiz dos chkdsk recorrentes: o SSD USB e UASP (enumera como SCSI\DISK, disco
+# "Fixo") e o Windows usa cache de escrita; puxar o cabo sem desmontar deixa metadados
+# NTFS pela metade (Ntfs 55/131). Licao de 12/08: em disco Fixo o Shell NAO expoe o
+# verbo Eject (mesma razao pela qual a bandeja "Remover hardware" nao lista o SSD) -
+# o InvokeVerb('Eject') antigo era um no-op silencioso. A via que funciona e a API
+# CM_Request_Device_Eject (cfgmgr32, a mesma do RemoveDrive): flush + desmonta +
+# remove o devnode; ao reconectar o cabo o disco remonta sozinho. So ejeta com export
+# 100% OK (com falhas o HD fica montado para diagnostico). Use -NoEject para manter.
+# Licao de 13/08: chamar Eject no no do disco (nao-ejetavel) pode voltar VETO
+# "ilegal" antes de subirmos ao pai - agora escolhemos ANTES, por capability, o
+# primeiro ancestral REMOVABLE/EJECTSUPPORTED (no UAS USB\VID_...) e ejetamos ele.
+# O desfecho vai para o log ("EJECT: ...") para diagnostico entre maquinas.
 if (-not $NoEject) {
-    (New-Object -ComObject Shell.Application).Namespace(17).ParseName($drv).InvokeVerb('Eject')
-    Start-Sleep -Seconds 4
-    if (Test-Path -LiteralPath $sync) {
-        Write-Warning "Ejecao automatica nao concluiu (algo segura o $drv - Explorer/terminal aberto nele?). Use 'Remover hardware com seguranca' antes de desconectar."
-    } else {
-        Write-Host "HD ejetado com seguranca - pode desconectar o cabo." -ForegroundColor Green
+    Set-Location "$env:SystemDrive\"   # nao segurar CWD no volume que vai ser ejetado
+    $ejectLog = { param($msg) Add-Content -LiteralPath $log -Value "EJECT: $msg" -Encoding UTF8 -ErrorAction SilentlyContinue }
+    try {
+        Add-Type -Namespace WsSync -Name CfgMgr -MemberDefinition @'
+[DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
+public static extern int CM_Locate_DevNodeW(out uint devInst, string deviceId, uint flags);
+[DllImport("cfgmgr32.dll")]
+public static extern int CM_Get_Parent(out uint parent, uint devInst, uint flags);
+[DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
+public static extern int CM_Get_Device_IDW(uint devInst, System.Text.StringBuilder buffer, uint len, uint flags);
+[DllImport("cfgmgr32.dll")]
+public static extern int CM_Get_DevNode_Registry_PropertyW(uint devInst, uint prop, out uint regType, byte[] buffer, ref uint len, uint flags);
+[DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
+public static extern int CM_Request_Device_EjectW(uint devInst, out int vetoType, System.Text.StringBuilder vetoName, uint nameLen, uint flags);
+'@ -ErrorAction Stop
+        $letra   = $drv.TrimEnd(':')
+        $diskNum = (Get-Partition -DriveLetter $letra -ErrorAction Stop | Select-Object -First 1).DiskNumber
+        $pnpId   = (Get-CimInstance Win32_DiskDrive -Filter "Index=$diskNum" -ErrorAction Stop).PNPDeviceID
+        [uint32]$dev = 0
+        if ([WsSync.CfgMgr]::CM_Locate_DevNodeW([ref]$dev, $pnpId, 0) -ne 0) { throw "CM_Locate_DevNode falhou para $pnpId" }
+        # Seleciona por capability (CM_DRP_CAPABILITIES=0x10) o primeiro no da cadeia
+        # com REMOVABLE (0x4) ou EJECTSUPPORTED (0x2). No UASP o no do disco SCSI\DISK
+        # NAO e ejetavel; o ejetavel e o pai USB\VID_... (armazenamento UAS).
+        $alvoDev = 0; $alvoId = ''
+        for ($i = 0; $i -lt 5; $i++) {
+            $buf = New-Object byte[] 4; [uint32]$len = 4; [uint32]$rt = 0
+            $caps = 0
+            if ([WsSync.CfgMgr]::CM_Get_DevNode_Registry_PropertyW($dev, 0x10, [ref]$rt, $buf, [ref]$len, 0) -eq 0) {
+                $caps = [BitConverter]::ToUInt32($buf, 0)
+            }
+            if ($caps -band 0x6) {
+                $sbId = New-Object System.Text.StringBuilder 512
+                [void][WsSync.CfgMgr]::CM_Get_Device_IDW($dev, $sbId, 512, 0)
+                $alvoDev = $dev; $alvoId = $sbId.ToString(); break
+            }
+            [uint32]$pai = 0
+            if ([WsSync.CfgMgr]::CM_Get_Parent([ref]$pai, $dev, 0) -ne 0) { break }
+            $dev = $pai
+        }
+        if (-not $alvoDev) { throw "nenhum devnode ejetavel (REMOVABLE/EJECTSUPPORTED) na cadeia de $pnpId" }
+        # Ejeta o no escolhido; 1 retry apos 1s se falhar sem veto nomeado (transiente).
+        $ejetado = $false; $vetoNome = ''; [int]$vetoTipo = 0; $rc = -1
+        for ($tent = 1; $tent -le 2; $tent++) {
+            $sb = New-Object System.Text.StringBuilder 260
+            $vetoTipo = 0
+            $rc = [WsSync.CfgMgr]::CM_Request_Device_EjectW($alvoDev, [ref]$vetoTipo, $sb, 260, 0)
+            $vetoNome = $sb.ToString()
+            if ($rc -eq 0 -and $vetoTipo -eq 0) { $ejetado = $true; break }
+            if ($vetoNome) { break }   # veto real (handle/app segurando) - retry nao resolve
+            Start-Sleep -Seconds 1
+        }
+        Start-Sleep -Seconds 2
+        if ($ejetado -and -not (Test-Path -LiteralPath $sync)) {
+            Write-Host "HD ejetado com seguranca - pode desconectar o cabo." -ForegroundColor Green
+            & $ejectLog "ok ($alvoId)"
+        } elseif ($vetoNome) {
+            Write-Warning "Ejecao VETADA (tipo $vetoTipo) por: $vetoNome - feche Explorer/terminal/VS Code abertos no $drv e rode 'wse' de novo, ou desmonte manualmente."
+            & $ejectLog "vetada tipo=$vetoTipo por=$vetoNome (no $alvoId)"
+        } elseif ($ejetado) {
+            # CM disse ok mas o volume ainda responde - remontagem instantanea? reportar.
+            Write-Warning "CM reportou ejecao OK mas $drv ainda esta montado - desmonte manualmente antes de desconectar o cabo."
+            & $ejectLog "cm-ok-mas-montado (no $alvoId)"
+        } else {
+            Write-Warning "Ejecao automatica nao concluiu (CM retorno $rc, veto tipo $vetoTipo, no $alvoId). Desmonte manualmente antes de desconectar o cabo."
+            & $ejectLog "rc=$rc vetoTipo=$vetoTipo (no $alvoId)"
+        }
+    } catch {
+        Write-Warning "Ejecao automatica falhou: $($_.Exception.Message). Desmonte manualmente antes de desconectar o cabo."
+        & $ejectLog "exception: $($_.Exception.Message)"
     }
 }
 # exit explicito: sem ele o "exit $rc" do sync.ps1 herda o codigo do ultimo comando

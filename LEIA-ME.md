@@ -71,9 +71,16 @@ Duas proteções:
 1. **Auto-eject:** o `export.ps1` ejeta o HD automaticamente ao terminar **sem falhas**
    (descarrega o cache e desmonta — depois disso pode puxar o cabo). Para manter
    montado: `wse -NoEject`. Com falhas no export, o HD fica montado para diagnóstico.
+   Desde 13/08 o script escolhe o devnode ejetável **por capability** (no UASP é o nó
+   pai `USB\VID_...`, não o do disco) e grava o desfecho no log do export
+   (linha `EJECT: ok|vetada por <processo>|rc=N|exception`) — se der mensagem de erro,
+   o log diz exatamente o que houve. Veto com nome de processo = algo com handle
+   aberto no F: (Explorer/terminal/VS Code); fechar e rodar `wse` de novo.
 2. **Remoção rápida (uma vez por notebook):** Gerenciador de Dispositivos →
    Unidades de disco → SanDisk Portable SSD → aba Diretivas → **Remoção rápida**.
    Desliga o cache de escrita; puxar o cabo passa a ser seguro mesmo sem ejetar.
+   ✅ Ativada no vivobook (12/08, via registro) e **confirmada ativa no ntb2**
+   (13/08, RemovalPolicy=3 no devnode do disco) — o eject virou cinto-e-suspensório.
 
 Nunca desconecte o HD durante um export/import em andamento.
 
