@@ -20,6 +20,7 @@ Para o `inner-guru` (git), trabalho inacabado deve virar **commit** antes do exp
 - `C:\Workspace` (Cowork, Claude Code, Projetos) — espelho
 - `C:\Dev\inner-guru-design-system` — espelho (sem node_modules/.next)
 - `C:\Users\dpfre\.claude` — rules, skills, scheduled-tasks, settings + memória dos projetos (sem histórico de sessões)
+  e `plugins\` — inclui o **oh-my-claudecode** já compilado (~489 MB: 439 MB em `plugins\cache\omc`, 50 MB no clone do marketplace)
 - `C:\Users\dpfre\claude-instagram` — scripts + .env
 - `C:\Users\dpfre\plugins` — plugin contador-irpf-2026
 - Config virtualizado do Claude Desktop (referência em `mirror\configs\`)
@@ -54,6 +55,13 @@ Para o `inner-guru` (git), trabalho inacabado deve virar **commit** antes do exp
 6. `npm install` em `C:\Dev\inner-guru\apps\frontend` e em `C:\Dev\inner-guru-design-system`.
 7. Abrir Claude Desktop → Configurações → Desenvolvedor → conferir gmail_mcp e defi_mcp. Subir a skill `F:\WorkspaceSync\skill\workspace-sync.zip` em Habilidades pessoais.
 8. Identidade git: `git -C C:\Dev\inner-guru config user.name "Renato Menezes Santana"` e `...config user.email "dpf.renato.rms@gmail.com"`.
+9. Plugin **oh-my-claudecode**: viaja pelo HD junto com `.claude\plugins`, já compilado — normalmente não precisa de nada. Se o servidor MCP `t` falhar ao abrir o Claude Code, rode `ws-omc` e reinicie.
+
+   > Em instalação nova (ou se a pasta do plugin não existir), instale primeiro **dentro do Claude Code** — `/plugin marketplace add https://github.com/Yeachan-Heo/oh-my-claudecode` e `/plugin install oh-my-claudecode` — depois rode `ws-omc` e, por fim, `/omc-setup`.
+   >
+   > Motivo do `ws-omc`: o `/plugin install` clona o repo e roda `npm install`, mas **não roda o build**. Os 6 artefatos de `bridge/` só existem no pacote npm, não no Git. Sem eles o servidor MCP `t` morre com `CONNECTION_CLOSED` e as 50 ferramentas do plugin (LSP, ast-grep, `python_repl`, `state_*`, `notepad_*`, `wiki_*`) ficam fora do ar — as skills carregam, o maquinário não.
+   >
+   > `node_modules` tem binários nativos por plataforma. O espelho só serve entre máquinas de mesma arquitetura (Windows x64). Em arquitetura diferente, apague `node_modules` e rode `ws-omc` de novo.
 
 > Escopo: esta lista cobre o WORKSPACE. Apps pessoais dos atalhos do Desktop (CapCut, Obsidian, Trezor Suite, Wispr Flow etc.) não fazem parte e devem ser instalados conforme a necessidade.
 

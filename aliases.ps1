@@ -11,7 +11,11 @@ function ws-export { powershell -ExecutionPolicy Bypass -File 'F:\WorkspaceSync\
 function ws-snap   { powershell -ExecutionPolicy Bypass -File 'F:\WorkspaceSync\sync.ps1' -Mode export-snap @args }   # export + snapshot datado
 function ws-repair { powershell -ExecutionPolicy Bypass -File 'F:\WorkspaceSync\sync.ps1' -Mode import -ForceRepair @args }  # forca chkdsk + import
 
+# Fora do sync.ps1: nao e import/export, e manutencao do plugin oh-my-claudecode.
+# Refaz os artefatos de bridge/ que o /plugin install nao constroi.
+function ws-omc    { powershell -ExecutionPolicy Bypass -File 'F:\WorkspaceSync\instalar-omc.ps1' @args }  # finaliza o build do plugin OMC
+
 Set-Alias wsi ws-import
 Set-Alias wse ws-export
 
-Write-Host "Atalhos workspace-sync: ws-import (wsi) | ws-export (wse) | ws-snap | ws-repair" -ForegroundColor DarkGray
+Write-Host "Atalhos workspace-sync: ws-import (wsi) | ws-export (wse) | ws-snap | ws-repair | ws-omc" -ForegroundColor DarkGray
