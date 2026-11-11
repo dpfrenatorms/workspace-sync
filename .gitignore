@@ -5,3 +5,9 @@ logs/
 git-remotes/
 skill/*.zip
 .needs-chkdsk
+
+# OMC (oh-my-claudecode) — estado de runtime local (session_id, cwd, pid, transcripts).
+# Padrao recomendado pelo projeto: ignora tudo em .omc/ exceto skills de projeto.
+.omc/*
+!.omc/skills/
+!.omc/skills/**
